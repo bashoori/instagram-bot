@@ -3,7 +3,7 @@
 # Author: Bita Ashoori
 # Description:
 # Simple Instagram Chatbot that collects name and email,
-# stores in Google Sheets, and shows a 4-button menu.
+# saves them to Google Sheets, and shows a 4-button menu.
 # =====================================================
 
 import os
@@ -12,7 +12,9 @@ from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 from utils.google_sheet import save_to_google_sheet
 
-# --- Load environment variables ---
+# ---------------------------------------------------
+# Load environment variables
+# ---------------------------------------------------
 load_dotenv()
 
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN")
@@ -24,14 +26,18 @@ GRAPH_API = "https://graph.facebook.com/v17.0"
 
 app = Flask(__name__)
 
-# --- Simple state memory (for prototype only) ---
-user_state = {}  # {user_id: {"state": "expecting_name"/"expecting_email", "name": "..." }}
+# ---------------------------------------------------
+# Temporary in-memory user states
+# ---------------------------------------------------
+# {user_id: {"state": "expecting_name"/"expecting_email", "name": "..."}}
+user_state = {}
+
 
 # ---------------------------------------------------
-# VERIFY WEBHOOK (for Meta setup)
+# VERIFY WEBHOOK (Meta setup)
 # ---------------------------------------------------
 @app.route("/webhook", methods=["GET"])
-def verify():
+def verify_webhook():
     mode = request.args.get("hub.mode")
     token = request.args.get("hub.verify_token")
     challenge = request.args.get("hub.challenge")
@@ -39,16 +45,15 @@ def verify():
     if mode == "subscribe" and token == VERIFY_TOKEN:
         print("✅ Webhook verified successfully.")
         return challenge, 200
-    else:
-        print("❌ Verification failed.")
-        return "Verification failed", 403
+    print("❌ Webhook verification failed.")
+    return "Verification failed", 403
 
 
 # ---------------------------------------------------
 # RECEIVE MESSAGES
 # ---------------------------------------------------
 @app.route("/webhook", methods=["POST"])
-def webhook():
+def handle_webhook():
     data = request.get_json()
     print("📩 Incoming message:", data)
 
@@ -56,14 +61,15 @@ def webhook():
         for entry in data.get("entry", []):
             for change in entry.get("changes", []):
                 value = change.get("value", {})
-                message = value.get("message", {})
-                sender_id = message.get("from", {}).get("id") or value.get("from", {}).get("id")
-                text = (message.get("text") or "").strip() if "text" in message else None
+                msg = value.get("message", {})
+                sender = msg.get("from") or value.get("from", {})
+                sender_id = sender.get("id")
+                text = (msg.get("text") or "").strip() if "text" in msg else None
 
-                if not sender_id:
+                if not sender_id or not text:
                     continue
 
-                # --- Handle conversation states ---
+                # --- Conversation flow ---
                 state = user_state.get(sender_id, {}).get("state")
 
                 if state == "expecting_name":
@@ -72,7 +78,7 @@ def webhook():
                     send_text(sender_id, "متشکرم! حالا لطفاً ایمیل خود را وارد کنید:")
                     continue
 
-                elif state == "expecting_email":
+                if state == "expecting_email":
                     user_state[sender_id]["email"] = text
                     name = user_state[sender_id]["name"]
                     email = user_state[sender_id]["email"]
@@ -82,30 +88,30 @@ def webhook():
                     show_menu(sender_id)
                     continue
 
-                # --- Handle main menu commands ---
-                if text in ["شروع", "start", "شروع 🏁"]:
+                # --- Main menu commands ---
+                normalized = text.lower()
+                if normalized in ["start", "شروع", "شروع 🏁"]:
                     send_text(sender_id, "سلام 👋 به ربات دیجیتال مارکتینگ خوش آمدید!\nاز منوی زیر انتخاب کنید:")
                     show_menu(sender_id)
-
-                elif text in ["درباره ما", "📘 درباره ما"]:
-                    send_text(sender_id, "📘 درباره ما:\nما آموزش و راه‌اندازی بیزنس آنلاین، اتوماسیون و دیجیتال مارکتینگ را برای همه ساده کرده‌ایم.\nبا ما یاد بگیرید چطور برند خودتان را بسازید و درآمد آنلاین کسب کنید.")
+                elif normalized in ["about", "درباره ما", "📘 درباره ما"]:
+                    send_text(
+                        sender_id,
+                        "📘 درباره ما:\nما آموزش و راه‌اندازی بیزنس آنلاین، اتوماسیون و دیجیتال مارکتینگ را برای همه ساده کرده‌ایم.\nبا ما یاد بگیرید چطور برند خودتان را بسازید و درآمد آنلاین کسب کنید."
+                    )
                     send_text(sender_id, "برای رزرو جلسه یا ثبت‌نام از منوی زیر انتخاب کنید:")
                     show_menu(sender_id)
-
-                elif text in ["رزرو جلسه", "📅 رزرو جلسه"]:
-                    send_text(sender_id, "📅 برای رزرو جلسه لطفاً وارد این لینک شوید:\nhttps://calendly.com/your-link\nیا از منوی زیر گزینه‌ی دیگری را انتخاب کنید.")
+                elif normalized in ["book", "رزرو جلسه", "📅 رزرو جلسه"]:
+                    send_text(sender_id, "📅 برای رزرو جلسه لطفاً وارد این لینک شوید:\nhttps://calendly.com/your-link")
                     show_menu(sender_id)
-
-                elif text in ["ثبت‌نام", "📝 ثبت‌نام"]:
+                elif normalized in ["register", "ثبت‌نام", "📝 ثبت‌نام"]:
                     send_text(sender_id, "📝 لطفاً نام خود را وارد کنید:")
                     user_state[sender_id] = {"state": "expecting_name"}
-
                 else:
                     send_text(sender_id, "من متوجه نشدم، لطفاً یکی از گزینه‌های منو را انتخاب کنید 👇")
                     show_menu(sender_id)
 
     except Exception as e:
-        print("⚠️ Error:", e)
+        print("⚠️ Error processing webhook:", e)
         return jsonify({"status": "error", "message": str(e)}), 500
 
     return "ok", 200
@@ -124,12 +130,12 @@ def send_text(recipient_id, text):
     }
     params = {"access_token": PAGE_ACCESS_TOKEN}
     r = requests.post(url, json=payload, params=params)
-    print("➡️ Sent:", text, "| status:", r.status_code)
+    print(f"➡️ Sent to {recipient_id}: {text} | status: {r.status_code}")
     return r.status_code
 
 
 def show_menu(recipient_id):
-    """Send main menu as Quick Replies"""
+    """Send main menu as quick replies"""
     url = f"{GRAPH_API}/{IG_ACCOUNT_ID}/messages"
     payload = {
         "messaging_product": "instagram",
@@ -138,9 +144,9 @@ def show_menu(recipient_id):
             "text": "منوی اصلی 👇",
             "quick_replies": [
                 {"content_type": "text", "title": "شروع 🏁", "payload": "START"},
-                {"content_type": "text", "title": "درباره ما 📘", "payload": "ABOUT"},
-                {"content_type": "text", "title": "ثبت‌نام 📝", "payload": "REGISTER"},
-                {"content_type": "text", "title": "رزرو جلسه 📅", "payload": "BOOK"}
+                {"content_type": "text", "title": "📘 درباره ما", "payload": "ABOUT"},
+                {"content_type": "text", "title": "📝 ثبت‌نام", "payload": "REGISTER"},
+                {"content_type": "text", "title": "📅 رزرو جلسه", "payload": "BOOK"}
             ]
         }
     }
